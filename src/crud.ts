@@ -1,8 +1,9 @@
 // CRUD operations
-import { z } from "../deps.ts";
+import { z, ZodRawShape } from "../deps.ts";
 import { withBatchedOperation } from "./batchOperations.ts";
 import {
   getIndexPrefixes,
+  getKeysFromTableDefinition,
   keysToItems,
   schemaToKeys,
   selectFromEntries,
@@ -15,12 +16,16 @@ import {
   QueryArgs,
   QueryKvOptions,
   TableDefinition,
+  UpsertManyArgs,
   WithMaybeVersionstamp,
   WithVersionstamp,
 } from "./types.ts";
 import { mergeValueAndVersionstamp } from "./util.ts";
 
-export async function listTable<T extends TableDefinition>(
+export async function listTable<
+  PentagonRawShape extends ZodRawShape,
+  T extends TableDefinition<PentagonRawShape>,
+>(
   kv: Deno.Kv,
   tableName: string,
 ) {
@@ -35,7 +40,10 @@ export async function listTable<T extends TableDefinition>(
   return items;
 }
 
-export async function listTableWithIndexPrefixes<T extends TableDefinition>(
+export async function listTableWithIndexPrefixes<
+  PentagonRawShape extends ZodRawShape,
+  T extends TableDefinition<PentagonRawShape>,
+>(
   kv: Deno.Kv,
   ...prefixes: Deno.KvKeyPart[]
 ) {
@@ -52,7 +60,10 @@ export async function listTableWithIndexPrefixes<T extends TableDefinition>(
   return items;
 }
 
-export async function read<T extends TableDefinition>(
+export async function read<
+  PentagonRawShape extends ZodRawShape,
+  T extends TableDefinition<PentagonRawShape>,
+>(
   kv: Deno.Kv,
   keys: PentagonKey[],
   kvOptions?: QueryKvOptions,
@@ -73,7 +84,8 @@ export async function remove(
 }
 
 export async function update<
-  T extends TableDefinition,
+  PentagonRawShape extends ZodRawShape,
+  T extends TableDefinition<PentagonRawShape>,
   Item extends z.output<T["schema"]>,
 >(
   kv: Deno.Kv,
@@ -95,7 +107,10 @@ export async function update<
   }));
 }
 
-function createOne<T extends TableDefinition>(
+function createOne<
+  PentagonRawShape extends ZodRawShape,
+  T extends TableDefinition<PentagonRawShape>,
+>(
   res: Deno.AtomicOperation,
   item: z.output<T["schema"]>,
   keys: PentagonKey[],
@@ -115,23 +130,73 @@ function createOne<T extends TableDefinition>(
   }
 }
 
-export async function create<T extends TableDefinition>(
+export async function create<
+  PentagonRawShape extends ZodRawShape,
+  T extends TableDefinition<PentagonRawShape>,
+>(
   kv: Deno.Kv,
   tableName: string,
   tableDefinition: T,
-  createArgs: CreateArgs<T>,
-): Promise<WithVersionstamp<z.output<T["schema"]>>> {
+  createArgs: CreateArgs<PentagonRawShape, T>,
+): Promise<WithVersionstamp<z.input<T["schema"]>>> {
   return (await createMany(kv, tableName, tableDefinition, {
     data: [createArgs.data],
   }))?.[0];
 }
 
-export async function createMany<T extends TableDefinition>(
+export async function upsertMany<
+  PentagonRawShape extends ZodRawShape,
+  T extends TableDefinition<PentagonRawShape>,
+>(
   kv: Deno.Kv,
   tableName: string,
   tableDefinition: T,
-  createManyArgs: CreateManyArgs<T>,
-): Promise<WithVersionstamp<z.output<T["schema"]>>[]> {
+  upsertManyArgs: UpsertManyArgs<PentagonRawShape, T>,
+): Promise<WithVersionstamp<z.input<T["schema"]>>[]> {
+  const primaryKey = getKeysFromTableDefinition(tableDefinition);
+
+  if (!primaryKey) {
+    throw new Error(
+      `No valid key found for upserting '${tableName}', make sure it's defined in your Pentagon configuration.`,
+    );
+  }
+  const indexPrefixes = getIndexPrefixes(tableName, tableDefinition.schema);
+  const keys = schemaToKeys(tableName, tableDefinition.schema, upsertManyArgs.data.map(x => x[primaryKey]));
+  const itemsAlreadyInDb = await keysToItems(kv, tableName, keys, upsertManyArgs.where, indexPrefixes);
+
+  const filteredCreate = upsertManyArgs.data
+    .filter((x) =>
+      !itemsAlreadyInDb
+        .map((y) => (y.value as Record<typeof primaryKey, unknown>)[primaryKey])
+        .includes((x as Record<typeof primaryKey, unknown>)[primaryKey])
+    );
+
+  const createdItemsWithVersionstamps = await withBatchedOperation(
+    kv,
+    filteredCreate,
+    (res, data) => {
+      const parsedData: z.output<T["schema"]> = tableDefinition.schema.parse(
+        data,
+      );
+      const keys = schemaToKeys(tableName, tableDefinition.schema, parsedData);
+      createOne(res, parsedData, keys);
+      return parsedData;
+    },
+    "create",
+  );
+
+  return createdItemsWithVersionstamps;
+}
+
+export async function createMany<
+  PentagonRawShape extends ZodRawShape,
+  T extends TableDefinition<PentagonRawShape>,
+>(
+  kv: Deno.Kv,
+  tableName: string,
+  tableDefinition: T,
+  createManyArgs: CreateManyArgs<PentagonRawShape, T>,
+): Promise<WithVersionstamp<z.input<T["schema"]>>[]> {
   const createdItemsWithVersionstamps = await withBatchedOperation(
     kv,
     createManyArgs.data,
@@ -149,17 +214,19 @@ export async function createMany<T extends TableDefinition>(
   return createdItemsWithVersionstamps;
 }
 
-export async function findMany<T extends TableDefinition>(
+export async function findMany<
+  PentagonRawShape extends ZodRawShape,
+  T extends TableDefinition<PentagonRawShape>,
+>(
   kv: Deno.Kv,
   tableName: string,
   tableDefinition: T,
-  queryArgs: QueryArgs<T>,
+  queryArgs: QueryArgs<PentagonRawShape, T>,
 ) {
-  console.log(tableName);
   const keys = schemaToKeys(
     tableName,
     tableDefinition.schema,
-    queryArgs.where ?? [],
+    queryArgs.where ?? {},
   );
   const indexPrefixes = getIndexPrefixes(tableName, tableDefinition.schema);
   const foundItems = await keysToItems(

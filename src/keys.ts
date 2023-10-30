@@ -1,4 +1,4 @@
-import { z } from "../deps.ts";
+import { z, ZodRawShape } from "../deps.ts";
 import { listTableWithIndexPrefixes, read } from "./crud.ts";
 import { PentagonKeyError } from "./errors.ts";
 import { filterEntries } from "./search.ts";
@@ -46,31 +46,54 @@ export function parseKeyProperties(
   return parsedProperties[0];
 }
 
-export function schemaToKeys<T extends ReturnType<typeof z.object>>(
+export function getKeysFromTableDefinition<
+  PentagonRawShape extends ZodRawShape,
+  T extends TableDefinition<PentagonRawShape>,
+>(tableDefinition: T) {
+  // this works on primary keys, I need examples what to handle here
+
+  const values = tableDefinition.schema.shape;
+  const schemaKeys = tableDefinition.schema.keyof().options as Array<
+    keyof PentagonRawShape
+  >;
+  for (const k of schemaKeys) {
+    if (values[k]._def.description === "primary") {
+      return k;
+    }
+  }
+}
+
+export function schemaToKeys<
+  PentagonRawShape extends ZodRawShape,
+  T extends TableDefinition<PentagonRawShape>,
+>(
   tableName: string,
-  schema: T,
-  values: Partial<z.input<T>>,
+  schema: T["schema"],
+  values: QueryArgs<PentagonRawShape, T>["where"],
 ): PentagonKey[] {
   const accessKeys = schemaToAccessKeys(tableName, schema, values);
   const denoKeysArr = keysToIndexes(tableName, accessKeys);
   const pentagonKeys: PentagonKey[] = [];
 
   for (let i = 0; i < accessKeys.length; i++) {
-    denoKeysArr[i].forEach(denoKey => {
+    denoKeysArr[i].forEach((denoKey) => {
       pentagonKeys.push({
         accessKey: accessKeys[i],
         denoKey: denoKey,
-      })
-  });
+      });
+    });
   }
 
   return pentagonKeys;
 }
 
-export function schemaToAccessKeys<T extends ReturnType<typeof z.object>>(
+export function schemaToAccessKeys<
+  PentagonRawShape extends ZodRawShape,
+  T extends TableDefinition<PentagonRawShape>,
+>(
   tableName: string,
-  schema: T,
-  values: Partial<z.input<T>>,
+  schema: T["schema"],
+  values: QueryArgs<PentagonRawShape, T>["where"],
 ): AccessKey[] {
   const accessKeys = Object.entries(schema.shape).reduce(
     (current, [key, value]) => {
@@ -177,16 +200,17 @@ function keysToIndexes(
 }
 
 export async function keysToItems<
-  T extends TableDefinition,
+  PentagonRawShape extends ZodRawShape,
+  T extends TableDefinition<PentagonRawShape>,
 >(
   kv: Deno.Kv,
   tableName: string,
   keys: PentagonKey[],
-  where: QueryArgs<T>["where"],
+  where: QueryArgs<ZodRawShape, T>["where"],
   indexPrefixes: Deno.KvKey,
 ) {
   const entries = keys.length > 0
-    ? await read<T>(kv, keys)
+    ? await read<PentagonRawShape, T>(kv, keys)
     : await listTableWithIndexPrefixes(kv, ...indexPrefixes);
 
   // Sort using `where`
@@ -194,8 +218,9 @@ export async function keysToItems<
 }
 
 export function selectFromEntries<
-  T extends TableDefinition,
-  Q extends QueryArgs<T>,
+  PentagonRawShape extends ZodRawShape,
+  T extends TableDefinition<PentagonRawShape>,
+  Q extends QueryArgs<PentagonRawShape, T>,
   S extends NonNullable<Q["select"]>,
 >(
   items: Deno.KvEntry<z.output<T["schema"]>>[],
@@ -215,9 +240,12 @@ export function selectFromEntries<
   });
 }
 
-export function getIndexPrefixes<T extends ReturnType<typeof z.object>>(
+export function getIndexPrefixes<
+  PentagonRawShape extends ZodRawShape,
+  T extends TableDefinition<PentagonRawShape>,
+>(
   tableName: string,
-  schema: T,
+  schema: T["schema"],
 ): Deno.KvKey {
   const indexPrefixes = Object.entries(schema.shape).reduce(
     (current, [indexKey, indexValue]) => {

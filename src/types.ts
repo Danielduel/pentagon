@@ -1,18 +1,21 @@
 /// <reference lib="deno.unstable" />
-import { z } from "../deps.ts";
+import { z, ZodRawShape } from "../deps.ts";
 import { KeyPropertySchema } from "./keys.ts";
-export interface PentagonMethods<T extends TableDefinition> {
-  findFirst: <Args extends QueryArgs<T>>(
+export interface PentagonMethods<
+  PentagonRawShape extends ZodRawShape,
+  T extends TableDefinition<PentagonRawShape>,
+> {
+  findFirst: <Args extends QueryArgs<PentagonRawShape, T>>(
     args: Args,
-  ) => Promise<QueryResponse<T, Args>>;
+  ) => Promise<QueryResponse<PentagonRawShape, T, Args>>;
 
   // findFirstOrThrow: (
   //   args: QueryArgs<T>,
   // ) => QueryResponse<T, typeof args>;
 
-  findMany: <Args extends QueryArgs<T>>(
+  findMany: <Args extends QueryArgs<PentagonRawShape, T>>(
     args: Args,
-  ) => Promise<Array<QueryResponse<T, Args>>>;
+  ) => Promise<Array<QueryResponse<PentagonRawShape, T, Args>>>;
 
   // findUnique: (args: QueryArgs<T>) => QueryResponse<T, typeof args>;
 
@@ -20,21 +23,25 @@ export interface PentagonMethods<T extends TableDefinition> {
   //   args: QueryArgs<T>,
   // ) => QueryResponse<T, typeof args>;
 
-  create: <Args extends CreateArgs<T>>(
+  create: <Args extends CreateArgs<PentagonRawShape, T>>(
     args: Args,
-  ) => Promise<CreateAndUpdateResponse<T>>;
+  ) => Promise<CreateAndUpdateResponse<PentagonRawShape, T>>;
 
-  createMany: <Args extends CreateManyArgs<T>>(
+  createMany: <Args extends CreateManyArgs<PentagonRawShape, T>>(
     args: Args,
-  ) => Promise<CreateAndUpdateResponse<T>[]>;
+  ) => Promise<CreateAndUpdateResponse<PentagonRawShape, T>[]>;
 
-  update: <Args extends UpdateArgs<T>>(
+  upsertMany: <Args extends CreateManyArgs<PentagonRawShape, T>>(
     args: Args,
-  ) => Promise<CreateAndUpdateResponse<T>>;
+  ) => Promise<CreateAndUpdateResponse<PentagonRawShape, T>[]>;
 
-  updateMany: <Args extends UpdateArgs<T>>(
+  update: <Args extends UpdateArgs<PentagonRawShape, T>>(
     args: Args,
-  ) => Promise<Array<CreateAndUpdateResponse<T>>>;
+  ) => Promise<CreateAndUpdateResponse<PentagonRawShape, T>>;
+
+  updateMany: <Args extends UpdateArgs<PentagonRawShape, T>>(
+    args: Args,
+  ) => Promise<Array<CreateAndUpdateResponse<PentagonRawShape, T>>>;
 
   // upsert: (args: CreateAndUpdateArgs<T>) => CreateAndUpdateResponse<T>;
 
@@ -43,18 +50,21 @@ export interface PentagonMethods<T extends TableDefinition> {
   // @ts-ignore TODO: delete should not use QueryArgs or QueryResponse
   delete: <Args extends QueryArgs<T>>(
     args: Args,
-  ) => Promise<QueryResponse<T, Args>>;
+  ) => Promise<QueryResponse<PentagonRawShape, T, Args>>;
 
   // @ts-ignore TODO: deleteMany should not use QueryArgs or QueryResponse
   deleteMany: <Args extends QueryArgs<T>>(
     args: Args,
-  ) => Promise<QueryResponse<T, Args>>;
+  ) => Promise<QueryResponse<PentagonRawShape, T, Args>>;
 
   // aggregate: (args: QueryArgs<T>) => QueryResponse<T, typeof args>;
 }
 
-export type PentagonResult<T extends Record<string, TableDefinition>> = {
-  [K in keyof T]: PentagonMethods<T[K]>;
+export type PentagonResult<
+  PentagonRawShape extends ZodRawShape,
+  T extends Record<string, TableDefinition<PentagonRawShape>>
+> = {
+  [K in keyof T]: PentagonMethods<PentagonRawShape, T[K]>;
 };
 /*  & {
   // Built-in functions
@@ -92,30 +102,33 @@ export type RelationDefinition = [
   foreignKey: ForeignKey,
 ];
 
-export type TableDefinition = {
-  schema: ReturnType<typeof z.object>;
+export type TableDefinition<PentagonRawShape extends ZodRawShape> = {
+  schema: ReturnType<typeof z.object<PentagonRawShape>>;
   relations?: Record<string, RelationDefinition>;
 };
 
 export type QueryResponse<
-  T extends TableDefinition,
-  PassedInArgs extends QueryArgs<T>,
+  PentagonRawShape extends ZodRawShape,
+  T extends TableDefinition<PentagonRawShape>,
+  PassedInArgs extends QueryArgs<PentagonRawShape, T>,
 > = WithVersionstamp<
-  & Select<T, PassedInArgs["select"]>
-  & Include<T["relations"], PassedInArgs["include"]>
+  & Select<PentagonRawShape, T, PassedInArgs["select"]>
+  & Include<PentagonRawShape, T["relations"], PassedInArgs["include"]>
 >;
 
 type Nothing = {};
 
 type Select<
-  T extends TableDefinition,
-  Selected extends QueryArgs<T>["select"] | undefined,
+  PentagonRawShape extends ZodRawShape,
+  T extends TableDefinition<PentagonRawShape>,
+  Selected extends QueryArgs<PentagonRawShape, T>["select"] | undefined,
 > = Selected extends Partial<Record<string, unknown>>
   ? Pick<z.output<T["schema"]>, keyof Selected & string>
   : z.output<T["schema"]>;
 type Include<
-  Relations extends TableDefinition["relations"],
-  ToBeIncluded extends IncludeDetails<Relations> | undefined,
+  PentagonRawShape extends ZodRawShape,
+  Relations extends TableDefinition<PentagonRawShape>["relations"],
+  ToBeIncluded extends IncludeDetails<PentagonRawShape, Relations> | undefined,
 > = Relations extends Record<string, RelationDefinition>
   ? ToBeIncluded extends Record<string, unknown> ? {
       [Rel in keyof Relations]: Relations[Rel][1] extends
@@ -147,52 +160,75 @@ type MatchAndSelect<SourceSchema, ToBeIncluded> = {
 };
 
 export type DeleteResponse = { versionstamp: string };
-export type CreateAndUpdateResponse<T extends TableDefinition> =
-  WithVersionstamp<
-    z.output<
-      T["schema"]
-    >
-  >;
+export type CreateAndUpdateResponse<
+  PentagonRawShape extends ZodRawShape,
+  T extends TableDefinition<PentagonRawShape>,
+> = WithVersionstamp<
+  z.output<
+    T["schema"]
+  >
+>;
 
-export type CreateArgs<T extends TableDefinition> =
-  & Pick<QueryArgs<T>, "select">
+export type CreateArgs<
+  PentagonRawShape extends ZodRawShape,
+  T extends TableDefinition<PentagonRawShape>,
+> =
+  & Pick<QueryArgs<PentagonRawShape, T>, "select">
   & {
     data: z.input<T["schema"]>;
   };
-export type CreateManyArgs<T extends TableDefinition> =
-  & Pick<QueryArgs<T>, "select">
+export type CreateManyArgs<
+  PentagonRawShape extends ZodRawShape,
+  T extends TableDefinition<PentagonRawShape>,
+> =
+  & Pick<QueryArgs<PentagonRawShape, T>, "select">
   & {
     data: z.input<T["schema"]>[];
   };
-export type UpdateArgs<T extends TableDefinition> = QueryArgs<T> & {
+
+export type UpsertManyArgs<
+  PentagonRawShape extends ZodRawShape,
+  T extends TableDefinition<PentagonRawShape>,
+> =
+  & Pick<QueryArgs<PentagonRawShape, T>, "where">
+  & {
+    data: z.input<T["schema"]>[];
+  };
+
+export type UpdateArgs<
+  PentagonRawShape extends ZodRawShape,
+  T extends TableDefinition<PentagonRawShape>,
+> = QueryArgs<PentagonRawShape, T> & {
   data: Partial<WithMaybeVersionstamp<z.input<T["schema"]>>>;
 };
 
 export type QueryKvOptions = Parameters<Deno.Kv["get"]>[1];
 
-type IncludeDetails<Relations extends TableDefinition["relations"]> =
-  Relations extends Record<string, RelationDefinition> ? {
-      [Rel in keyof Relations]?:
-        | true
-        | (Relations[Rel][1] extends [{ _output: infer OneToManyRelatedSchema }]
-          ? Includable<OneToManyRelatedSchema>
-          : Relations[Rel][1] extends { _output: infer OneToOneRelatedSchema }
-            ? Includable<OneToOneRelatedSchema>
-          : never);
-    }
-    : never;
+type IncludeDetails<
+  PentagonRawShape extends ZodRawShape,
+  Relations extends TableDefinition<PentagonRawShape>["relations"],
+> = Relations extends Record<string, RelationDefinition> ? {
+    [Rel in keyof Relations]?:
+      | true
+      | (Relations[Rel][1] extends [{ _output: infer OneToManyRelatedSchema }]
+        ? Includable<OneToManyRelatedSchema>
+        : Relations[Rel][1] extends { _output: infer OneToOneRelatedSchema }
+          ? Includable<OneToOneRelatedSchema>
+        : never);
+  }
+  : never;
 
 type Includable<T> = T extends Record<string, unknown>
   ? { [K in keyof T]?: true | Includable<T[K]> }
   : never;
 
-export type QueryArgs<T extends TableDefinition> = {
+export type QueryArgs<PentagonRawShape extends ZodRawShape, T extends TableDefinition<PentagonRawShape>> = {
   where?: Partial<WithMaybeVersionstamp<z.output<T["schema"]>>>;
   take?: number;
   skip?: number;
   select?: Partial<Record<keyof z.output<T["schema"]>, true>>;
   orderBy?: Partial<z.output<T["schema"]>>;
-  include?: IncludeDetails<T["relations"]>;
+  include?: IncludeDetails<PentagonRawShape, T["relations"]>;
   distinct?: Array<keyof z.output<T["schema"]>>;
   kvOptions?: QueryKvOptions;
 };

@@ -9,6 +9,20 @@ import { PentagonBatchOpError } from "./errors.ts";
  */
 const OPERATION_LIMIT = 10;
 
+function batchedOperationDebugData<T>(
+  itemBatches: T[][]
+) {
+  let log = "";
+
+  itemBatches.forEach(batch => {
+    log += `\nBatch`
+    log += ` Size: ${JSON.stringify(batch).length}`
+    log += ` Length: ${batch.length}`;
+  });
+
+  return log;
+}
+
 export async function withBatchedOperation<T>(
   kv: Deno.Kv,
   itemsToBatch: T[],
@@ -30,11 +44,11 @@ export async function withBatchedOperation<T>(
         itemBatches[i][j] = returnData;
       }
     }
-    const commitResult = await res.commit();
+    const commitResult = await res.check().commit();
 
     if (commitResult.ok === false) {
       throw new PentagonBatchOpError(
-        `Could not perform batched ${opName ? opName + " " : " "}operation.`,
+        `Could not perform batched ${opName ? opName + " " : " "}operation.${batchedOperationDebugData(itemBatches)}`,
       );
     }
 

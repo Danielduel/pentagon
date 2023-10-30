@@ -1,4 +1,5 @@
-import { create, createMany, findMany, remove, update } from "./crud.ts";
+import { ZodRawShape } from "../deps.ts";
+import { create, createMany, upsertMany, findMany, remove, update } from "./crud.ts";
 import { PentagonUpdateError } from "./errors.ts";
 import { getIndexPrefixes, keysToItems, schemaToKeys } from "./keys.ts";
 import type {
@@ -7,7 +8,9 @@ import type {
   TableDefinition,
 } from "./types.ts";
 
-export function createPentagon<T extends Record<string, TableDefinition>>(
+export function createPentagon<
+  PentagonRawShape extends ZodRawShape,
+  T extends Record<string, TableDefinition<PentagonRawShape>>>(
   kv: Deno.Kv,
   schema: T,
 ) {
@@ -16,11 +19,13 @@ export function createPentagon<T extends Record<string, TableDefinition>>(
   // @todo(skoshx): Add all properties
   const result = Object.fromEntries(
     Object.entries(schema).map(([tableName, tableDefinition]) => {
-      const methods: PentagonMethods<typeof tableDefinition> = {
+      const methods: PentagonMethods<PentagonRawShape, typeof tableDefinition> = {
         create: (createArgs) =>
           createImpl(kv, tableName, tableDefinition, createArgs),
         createMany: (createManyArgs) =>
           createManyImpl(kv, tableName, tableDefinition, createManyArgs),
+        upsertMany: (upsertManyArgs) =>
+          upsertManyImpl(kv, tableName, tableDefinition, upsertManyArgs),
         delete: (queryArgs) =>
           // @ts-ignore
           deleteImpl(kv, tableName, tableDefinition, queryArgs),
@@ -45,7 +50,7 @@ export function createPentagon<T extends Record<string, TableDefinition>>(
   // @ts-ignore: todo: add this without losing the inferred types
   result.getKv = () => kv;
 
-  return result as PentagonResult<T>;
+  return result as PentagonResult<PentagonRawShape, T>;
 }
 
 export function getKvInstance<T>(db: T): Deno.Kv {
@@ -53,12 +58,12 @@ export function getKvInstance<T>(db: T): Deno.Kv {
   return db.getKv();
 }
 
-async function createImpl<T extends TableDefinition>(
+async function createImpl<PentagonRawShape extends ZodRawShape, T extends TableDefinition<PentagonRawShape>>(
   kv: Deno.Kv,
   tableName: string,
   tableDefinition: T,
-  createArgs: Parameters<PentagonMethods<T>["create"]>[0],
-): ReturnType<PentagonMethods<T>["create"]> {
+  createArgs: Parameters<PentagonMethods<PentagonRawShape, T>["create"]>[0],
+): ReturnType<PentagonMethods<PentagonRawShape, T>["create"]> {
   return await create(
     kv,
     tableName,
@@ -67,12 +72,12 @@ async function createImpl<T extends TableDefinition>(
   );
 }
 
-async function createManyImpl<T extends TableDefinition>(
+async function createManyImpl<PentagonRawShape extends ZodRawShape, T extends TableDefinition<PentagonRawShape>>(
   kv: Deno.Kv,
   tableName: string,
   tableDefinition: T,
-  createManyArgs: Parameters<PentagonMethods<T>["createMany"]>[0],
-): ReturnType<PentagonMethods<T>["createMany"]> {
+  createManyArgs: Parameters<PentagonMethods<PentagonRawShape, T>["createMany"]>[0],
+): ReturnType<PentagonMethods<PentagonRawShape, T>["createMany"]> {
   return await createMany(
     kv,
     tableName,
@@ -81,11 +86,25 @@ async function createManyImpl<T extends TableDefinition>(
   );
 }
 
-async function deleteImpl<T extends TableDefinition>(
+async function upsertManyImpl<PentagonRawShape extends ZodRawShape, T extends TableDefinition<PentagonRawShape>>(
   kv: Deno.Kv,
   tableName: string,
   tableDefinition: T,
-  queryArgs: Parameters<PentagonMethods<T>["delete"]>[0],
+  createManyArgs: Parameters<PentagonMethods<PentagonRawShape, T>["createMany"]>[0],
+): ReturnType<PentagonMethods<PentagonRawShape, T>["createMany"]> {
+  return await upsertMany(
+    kv,
+    tableName,
+    tableDefinition,
+    createManyArgs,
+  );
+}
+
+async function deleteImpl<PentagonRawShape extends ZodRawShape, T extends TableDefinition<PentagonRawShape>>(
+  kv: Deno.Kv,
+  tableName: string,
+  tableDefinition: T,
+  queryArgs: Parameters<PentagonMethods<PentagonRawShape, T>["delete"]>[0],
 ) {
   const keys = schemaToKeys(
     tableName,
@@ -102,11 +121,11 @@ async function deleteImpl<T extends TableDefinition>(
   return await remove(kv, items.map((i) => i.key));
 }
 
-async function deleteManyImpl<T extends TableDefinition>(
+async function deleteManyImpl<PentagonRawShape extends ZodRawShape, T extends TableDefinition<PentagonRawShape>>(
   kv: Deno.Kv,
   tableName: string,
   tableDefinition: T,
-  queryArgs: Parameters<PentagonMethods<T>["deleteMany"]>[0],
+  queryArgs: Parameters<PentagonMethods<PentagonRawShape, T>["deleteMany"]>[0],
 ) {
   const keys = schemaToKeys(
     tableName,
@@ -124,12 +143,12 @@ async function deleteManyImpl<T extends TableDefinition>(
   return await remove(kv, items.map((i) => i.key));
 }
 
-async function updateManyImpl<T extends TableDefinition>(
+async function updateManyImpl<PentagonRawShape extends ZodRawShape, T extends TableDefinition<PentagonRawShape>>(
   kv: Deno.Kv,
   tableName: string,
   tableDefinition: T,
-  updateArgs: Parameters<PentagonMethods<T>["updateMany"]>[0],
-): ReturnType<PentagonMethods<T>["updateMany"]> {
+  updateArgs: Parameters<PentagonMethods<PentagonRawShape, T>["updateMany"]>[0],
+): ReturnType<PentagonMethods<PentagonRawShape, T>["updateMany"]> {
   const keys = schemaToKeys(
     tableName,
     tableDefinition.schema,
@@ -168,36 +187,36 @@ async function updateManyImpl<T extends TableDefinition>(
   }
 }
 
-async function updateImpl<T extends TableDefinition>(
+async function updateImpl<PentagonRawShape extends ZodRawShape, T extends TableDefinition<PentagonRawShape>>(
   kv: Deno.Kv,
   tableName: string,
   tableDefinition: T,
-  updateArgs: Parameters<PentagonMethods<T>["update"]>[0],
-): ReturnType<PentagonMethods<T>["update"]> {
+  updateArgs: Parameters<PentagonMethods<PentagonRawShape, T>["update"]>[0],
+): ReturnType<PentagonMethods<PentagonRawShape, T>["update"]> {
   return (await updateManyImpl(kv, tableName, tableDefinition, updateArgs))
     ?.[0];
 }
 
-async function findManyImpl<T extends TableDefinition>(
+async function findManyImpl<PentagonRawShape extends ZodRawShape, T extends TableDefinition<PentagonRawShape>>(
   kv: Deno.Kv,
   tableName: string,
   tableDefinition: T,
-  queryArgs: Parameters<PentagonMethods<T>["findMany"]>[0],
+  queryArgs: Parameters<PentagonMethods<PentagonRawShape, T>["findMany"]>[0],
 ) {
   return await findMany(
     kv,
     tableName,
     tableDefinition,
     queryArgs,
-  ) as Awaited<ReturnType<PentagonMethods<T>["findMany"]>>;
+  ) as Awaited<ReturnType<PentagonMethods<PentagonRawShape, T>["findMany"]>>;
 }
 
-async function findFirstImpl<T extends TableDefinition>(
+async function findFirstImpl<PentagonRawShape extends ZodRawShape, T extends TableDefinition<PentagonRawShape>>(
   kv: Deno.Kv,
   tableName: string,
   tableDefinition: T,
-  queryArgs: Parameters<PentagonMethods<T>["findFirst"]>[0],
+  queryArgs: Parameters<PentagonMethods<PentagonRawShape, T>["findFirst"]>[0],
 ) {
   return (await findMany(kv, tableName, tableDefinition, queryArgs))
-    ?.[0] as Awaited<ReturnType<PentagonMethods<T>["findFirst"]>>;
+    ?.[0] as Awaited<ReturnType<PentagonMethods<PentagonRawShape, T>["findFirst"]>>;
 }

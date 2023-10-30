@@ -1,10 +1,11 @@
-import { z } from "../deps.ts";
+import { ZodRawShape, z } from "../deps.ts";
 import { QueryArgs } from "../mod.ts";
 import { DatabaseValue, TableDefinition } from "./types.ts";
 import { isKeyEntry, removeVersionstamp } from "./util.ts";
 
 // @todo: move to something more solid at some point
-export function isMatchingValue(a: DatabaseValue, b: DatabaseValue) {
+// @todo(Danielduel): remove unknown if possible
+export function isMatchingValue(a: DatabaseValue, b: unknown | DatabaseValue) {
   if (a instanceof Date && b instanceof Date) {
     return a.getTime() === b.getTime();
   }
@@ -15,10 +16,11 @@ export function isMatchingValue(a: DatabaseValue, b: DatabaseValue) {
 }
 
 export function filterEntries<
-  T extends TableDefinition,
+PentagonRawShape extends ZodRawShape,
+  T extends TableDefinition<PentagonRawShape>,
 >(
   items: Deno.KvEntryMaybe<z.output<T["schema"]>>[],
-  where?: QueryArgs<T>["where"],
+  where?: QueryArgs<PentagonRawShape, T>["where"],
 ): Deno.KvEntry<z.output<T["schema"]>>[] {
   const filteredItems = items.filter(
     (item): item is Deno.KvEntry<z.output<T["schema"]>> => {
